@@ -1,0 +1,33 @@
+name: bodega_el_chino
+description: "Aplicación de escaneo de productos para bodega."
+publish_to: 'none' 
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Dependencias esenciales
+  # 1. mobile_scanner: Para el escaneo de códigos de barras y QR.
+  mobile_scanner: ^5.0.0 
+  # 2. http: Para realizar peticiones HTTP a la API (Open Food Facts).
+  http: ^1.2.1 
+  # 3. provider: Para la gestión de estado, roles y la base de datos simulada.
+  provider: ^6.1.2 
+  
+  # Utilidades
+  cupertino_icons: ^1.0.8
+  # Para el manejo de datos JSON
+  dartz: ^0.10.1 # Opcional pero útil para manejar resultados de API
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

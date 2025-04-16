@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "313835133324",
+    "project_id": "productos-registrados-ec864",
+    "storage_bucket": "productos-registrados-ec864.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:313835133324:android:0a70e9ad4868e216785ea9",
+        "android_client_info": {
+          "package_name": "com.example.bodega_el_chino"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDwUTs6dCuF6E5FZkjGWl7wQTcgk7mftCM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -21,7 +21,7 @@ class MainActivity : ComponentActivity() {
             Tecsup04Theme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Greeting(
-                        name = "Android",
+                        name = "2211132123312",
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
