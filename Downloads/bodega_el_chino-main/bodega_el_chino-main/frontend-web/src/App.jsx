@@ -1,394 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ShoppingCart, LayoutList, LogOut, Settings, BarChart3, Users, Box } from 'lucide-react';
+import ProductManagement from './components/admin/ProductManagement.jsx';
 
-// CORRECCIÓN: URL LOCAL para desarrollo (Backend de Node.js)
 const API_BASE_URL = 'http://localhost:3000/api';
-
-// --- Componentes ---
-
-// 1. Componente de Gestión de Productos (ProductManagement)
-const ProductManagement = ({ products, onProductsUpdate }) => {
-    const [name, setName] = useState('');
-    const [price, setPrice] = useState('');
-    const [stock, setStock] = useState('');
-    const [unit, setUnit] = useState('');
-    const [description, setDescription] = useState('');
-    const [imageUrl, setImageUrl] = useState('');
-    const [message, setMessage] = useState('');
-    const [isEditing, setIsEditing] = useState(false);
-    const [currentProductId, setCurrentProductId] = useState(null);
-    
-    // Estados para el Modal de Confirmación
-    const [showDeleteModal, setShowDeleteModal] = useState(false);
-    const [productToDelete, setProductToDelete] = useState(null);
-    const [showErrorModal, setShowErrorModal] = useState(false); // Para mostrar errores sin alert()
-
-    // Obtiene el token del localStorage (asume que el usuario está autenticado)
-    const getToken = () => localStorage.getItem('userToken');
-
-    const resetForm = () => {
-        setName('');
-        setPrice('');
-        setStock('');
-        setUnit('');
-        setDescription('');
-        setImageUrl('');
-        setIsEditing(false);
-        setCurrentProductId(null);
-    };
-
-    const handleFormSubmit = async (e) => {
-        e.preventDefault();
-        setMessage('Procesando...');
-
-        const token = getToken();
-        if (!token) {
-            setMessage('Error: Usuario no autenticado. Por favor, inicie sesión de nuevo.');
-            setShowErrorModal(true);
-            return;
-        }
-
-        const productData = {
-            nombre: name,
-            precio_unidad: parseFloat(price),
-            stock_actual: parseInt(stock, 10),
-            unidad_medida: unit,
-            descripcion: description,
-            url_imagen: imageUrl,
-        };
-
-        const method = isEditing ? 'PUT' : 'POST';
-        const endpoint = isEditing
-            ? `${API_BASE_URL}/productos/${currentProductId}`
-            : `${API_BASE_URL}/productos`;
-
-        try {
-            const response = await fetch(endpoint, {
-                method,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify(productData),
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                setMessage(`Éxito: ${isEditing ? 'Producto actualizado' : 'Producto creado'} correctamente.`);
-                resetForm();
-                onProductsUpdate(); // Refresca el catálogo principal
-            } else {
-                setMessage(`Error al ${isEditing ? 'actualizar' : 'crear'} producto: ${data.message || 'Verifique los datos.'}`);
-            }
-        } catch (error) {
-            setMessage('Error de conexión al servidor Node.js.');
-        }
-    };
-
-    const initiateDelete = (product) => {
-        const token = getToken();
-        if (!token) {
-            setMessage('Error: Usuario no autenticado. Por favor, inicie sesión de nuevo.');
-            setShowErrorModal(true);
-            return;
-        }
-        setProductToDelete(product);
-        setShowDeleteModal(true);
-    };
-
-    const handleDeleteProduct = async () => {
-        if (!productToDelete) return;
-
-        setShowDeleteModal(false); // Cierra el modal antes de la operación
-        setMessage('Eliminando...');
-
-        const id = productToDelete.id_producto;
-        const token = getToken();
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/productos/${id}`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                setMessage(`Éxito: Producto #${id} eliminado.`);
-                setProductToDelete(null);
-                onProductsUpdate();
-            } else {
-                setMessage(`Error al eliminar producto: ${data.message}`);
-            }
-        } catch (error) {
-            setMessage('Error de conexión al servidor Node.js.');
-        }
-    };
-
-    const startEdit = (product) => {
-        setName(product.nombre);
-        setPrice(product.precio_unidad.toString());
-        setStock(product.stock_actual.toString());
-        setUnit(product.unidad_medida);
-        setDescription(product.descripcion || '');
-        setImageUrl(product.url_imagen || '');
-        setCurrentProductId(product.id_producto);
-        setIsEditing(true);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-
-    // Sub-componente para la fila de producto
-    const ProductRow = ({ product }) => (
-        <tr className="border-b hover:bg-blue-50 transition duration-150">
-            <td className="p-4 text-sm font-medium text-gray-900">#{product.id_producto}</td>
-            <td className="p-4 flex items-center">
-                <img
-                    src={product.url_imagen || `https://placehold.co/40x40/f1f5f9/94a3b8?text=${product.nombre.substring(0, 1)}`}
-                    alt={product.nombre}
-                    className="w-10 h-10 object-cover rounded-md mr-3"
-                    onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.src = `https://placehold.co/40x40/f1f5f9/94a3b8?text=${product.nombre.substring(0, 1)}`;
-                    }}
-                />
-                <span className="text-sm text-gray-700 font-medium">{product.nombre}</span>
-            </td>
-            <td className="p-4 text-sm text-gray-600">S/. {parseFloat(product.precio_unidad).toFixed(2)}</td>
-            <td className="p-4">
-                <span className={`px-3 py-1 text-xs font-semibold rounded-full ${
-                    product.stock_actual > 20 ? 'bg-green-100 text-green-800' :
-                    product.stock_actual > 5 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-                }`}>
-                    {product.stock_actual} {product.unidad_medida}
-                </span>
-            </td>
-            <td className="p-4 text-sm text-gray-600 hidden md:table-cell">{new Date(product.fecha_actualizacion).toLocaleDateString('es-PE')}</td>
-            <td className="p-4 flex space-x-2">
-                <button
-                    onClick={() => startEdit(product)}
-                    className="text-blue-600 hover:text-blue-900 p-2 rounded-full hover:bg-blue-100 transition"
-                    title="Editar"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                </button>
-                <button
-                    onClick={() => initiateDelete(product)}
-                    className="text-red-600 hover:text-red-900 p-2 rounded-full hover:bg-red-100 transition"
-                    title="Eliminar"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M15 6V4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v2"/></svg>
-                </button>
-            </td>
-        </tr>
-    );
-
-    // Sub-componente Modal de Confirmación
-    const DeleteConfirmationModal = () => {
-        if (!showDeleteModal || !productToDelete) return null;
-
-        return (
-            <div className="fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4">
-                <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full transform transition-all">
-                    <div className="text-center">
-                        <div className="text-5xl text-red-500 mb-4">🗑️</div>
-                        <h3 className="text-xl font-bold text-gray-900 mb-3">Confirmar Eliminación</h3>
-                        <p className="text-base text-gray-600 mb-6">
-                            Estás a punto de eliminar permanentemente el producto **{productToDelete.nombre}**. ¿Continuar?
-                        </p>
-                    </div>
-                    <div className="flex justify-between space-x-3">
-                        <button
-                            onClick={() => {
-                                setShowDeleteModal(false);
-                                setProductToDelete(null);
-                            }}
-                            className="flex-1 px-4 py-3 text-sm font-semibold text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition"
-                        >
-                            Cancelar
-                        </button>
-                        <button
-                            onClick={handleDeleteProduct}
-                            className="flex-1 px-4 py-3 text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 transition"
-                        >
-                            Eliminar
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    // Sub-componente Modal de Error Genérico
-    const ErrorModal = () => {
-        if (!showErrorModal) return null;
-        
-        return (
-            <div className="fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4">
-                <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full transform transition-all">
-                    <div className="text-center">
-                        <div className="text-5xl text-yellow-500 mb-4">🛑</div>
-                        <h3 className="text-xl font-bold text-gray-900 mb-3">Acceso Denegado</h3>
-                        <p className="text-base text-gray-600 mb-6">
-                            {message}
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => setShowErrorModal(false)}
-                        className="w-full px-4 py-3 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition"
-                    >
-                        Entendido
-                    </button>
-                </div>
-            </div>
-        );
-    };
-
-
-    return (
-        <div className="space-y-12">
-            {/* Formulario de Creación/Edición */}
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
-                <h3 className="text-2xl font-bold text-blue-600 mb-6">
-                    {isEditing ? `✏️ Editando Producto #${currentProductId}` : '✨ Añadir Nuevo Producto'}
-                </h3>
-                {message && !showErrorModal && (
-                    <div className={`mb-6 p-4 rounded-xl text-center font-semibold ${
-                        message.includes('Error') ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
-                    }`}>
-                        {message}
-                    </div>
-                )}
-                <form onSubmit={handleFormSubmit} className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Nombre */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Nombre del Producto *</label>
-                            <input
-                                type="text"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
-                                required
-                            />
-                        </div>
-                        {/* Precio */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Precio por Unidad (S/.) *</label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                value={price}
-                                onChange={(e) => setPrice(e.target.value)}
-                                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
-                                required
-                            />
-                        </div>
-                        {/* Stock */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Stock Actual *</label>
-                            <input
-                                type="number"
-                                value={stock}
-                                onChange={(e) => setStock(e.target.value)}
-                                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
-                                required
-                            />
-                        </div>
-                        {/* Unidad de Medida */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Unidad de Medida (Ej: Kg, Litro, Unidad) *</label>
-                            <input
-                                type="text"
-                                value={unit}
-                                onChange={(e) => setUnit(e.target.value)}
-                                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
-                                required
-                            />
-                        </div>
-                    </div>
-
-                    {/* Descripción */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Descripción (Opcional)</label>
-                        <textarea
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            rows="3"
-                            className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-
-                    {/* URL Imagen */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">URL de Imagen (Opcional)</label>
-                        <input
-                            type="url"
-                            value={imageUrl}
-                            onChange={(e) => setImageUrl(e.target.value)}
-                            placeholder="https://ejemplo.com/imagen.jpg"
-                            className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-
-                    <div className="flex space-x-4">
-                        <button
-                            type="submit"
-                            className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold rounded-xl hover:from-blue-700 hover:to-purple-700 transition duration-200 shadow-md"
-                        >
-                            {isEditing ? '💾 Guardar Cambios' : '➕ Crear Producto'}
-                        </button>
-                        {isEditing && (
-                            <button
-                                type="button"
-                                onClick={resetForm}
-                                className="py-3 px-6 border border-gray-300 text-gray-700 font-bold rounded-xl hover:bg-gray-100 transition duration-200"
-                            >
-                                Cancelar Edición
-                            </button>
-                        )}
-                    </div>
-                </form>
-            </div>
-
-            {/* Listado de Productos */}
-            <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100">
-                <h3 className="text-2xl font-bold text-gray-800 mb-6">Lista de Productos ({products.length})</h3>
-                <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="p-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">ID</th>
-                                <th className="p-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Producto</th>
-                                <th className="p-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Precio</th>
-                                <th className="p-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Stock</th>
-                                <th className="p-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Actualización</th>
-                                <th className="p-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                            {products.length === 0 ? (
-                                <tr>
-                                    <td colSpan="6" className="text-center py-10 text-gray-500">No hay productos en el inventario.</td>
-                                </tr>
-                            ) : (
-                                products.map(product => (
-                                    <ProductRow key={product.id_producto} product={product} />
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            {/* Modals */}
-            <DeleteConfirmationModal />
-            <ErrorModal />
-        </div>
-    );
-};
 
 // 2. Componente de Vista del Administrador (AdminView)
 const AdminView = ({ user, onLogout, setView }) => {
@@ -529,7 +143,6 @@ const Layout = ({ children, user, goToCatalog, setView }) => {
     );
 };
 
-
 // --- Componentes Reutilizables Originales ---
 
 // 4. Componente de Login y Registro (AuthForm)
@@ -546,7 +159,6 @@ const AuthForm = ({ type, onAuthSuccess }) => {
         setMessage('Procesando...');
 
         try {
-            // Implementación de retraso con backoff para manejo de errores de red
             let response = null;
             let data = null;
             const maxRetries = 3;
@@ -558,14 +170,13 @@ const AuthForm = ({ type, onAuthSuccess }) => {
                         body: JSON.stringify({ email, password }),
                     });
                     data = await response.json();
-                    break; // Salir del bucle si la llamada es exitosa
+                    break;
                 } catch (err) {
-                    if (i === maxRetries - 1) throw err; // Re-lanzar error en el último intento
-                    const delay = Math.pow(2, i) * 1000; // 1s, 2s, 4s
+                    if (i === maxRetries - 1) throw err;
+                    const delay = Math.pow(2, i) * 1000;
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
-
 
             if (response.ok) {
                 setMessage(data.message);
@@ -880,7 +491,6 @@ const DetailView = ({ product, goToCatalog }) => (
     </div>
 );
 
-
 // --- Componente Principal ---
 const App = () => {
     const [products, setProducts] = useState([]);
@@ -891,7 +501,6 @@ const App = () => {
     const [user, setUser] = useState(null);
 
     useEffect(() => {
-        // Chequea si el usuario ya tiene un token de admin guardado
         const storedToken = localStorage.getItem('userToken');
         const storedEmail = localStorage.getItem('userEmail');
         if (storedToken && storedEmail) {
@@ -905,7 +514,6 @@ const App = () => {
         setLoading(true);
         setError(null);
         try {
-            // Implementación de retraso con backoff para manejo de errores de red
             let response = null;
             let data = null;
             const maxRetries = 3;
@@ -915,16 +523,16 @@ const App = () => {
                     if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
                     data = await response.json();
                     setProducts(data);
-                    return; // Salir de la función si es exitoso
+                    return;
                 } catch (err) {
-                    if (i === maxRetries - 1) throw err; // Re-lanzar error en el último intento
-                    const delay = Math.pow(2, i) * 1000; // 1s, 2s, 4s
+                    if (i === maxRetries - 1) throw err;
+                    const delay = Math.pow(2, i) * 1000;
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
         } catch (err) {
             setError(`No se pudo cargar el catálogo. Verifique: 1) Que el servidor Node.js esté corriendo en ${API_BASE_URL}. 2) Que la tabla 'productos' exista.`);
-            setProducts([]); // Asegura que no haya datos viejos si falla
+            setProducts([]);
         } finally {
             setLoading(false);
         }
@@ -950,7 +558,6 @@ const App = () => {
     const goToCatalog = () => {
         setSelectedProduct(null);
         setView('catalogo');
-        // Asegura que el catálogo esté actualizado al volver
         fetchProducts();
     };
 
@@ -1026,12 +633,10 @@ const App = () => {
         }
     };
 
-    // Para las vistas de login/registro, no usar Layout
     if (view === 'login' || view === 'registro') {
         return renderView();
     }
 
-    // Para otras vistas, usar Layout
     return (
         <Layout user={user} goToCatalog={goToCatalog} setView={setView}>
             {renderView()}

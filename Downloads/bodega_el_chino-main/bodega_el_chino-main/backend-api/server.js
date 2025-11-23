@@ -1,8 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-// Importamos las rutas de productos
-const productRoutes = require('./routes/product.routes'); 
-// Importamos las nuevas rutas de autenticación
+const productRoutes = require('./routes/product.routes');
 const authRoutes = require('./routes/auth.routes'); 
 
 require('dotenv').config(); 
@@ -10,32 +8,58 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Opciones de CORS para permitir la comunicación explícita con el frontend React
-const corsOptions = {
-    origin: 'http://localhost:5173', // El puerto de desarrollo de Vite/React
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true, // Permite cookies y encabezados de autenticación
-};
-app.use(cors(corsOptions)); // Aplicamos las opciones de CORS
+// CORS permisivo para desarrollo
+app.use(cors({
+    origin: true,
+    credentials: true
+}));
 
-app.use(express.json()); // Permite a Express leer JSON en el cuerpo de las peticiones
+app.use(express.json());
 
 // ------------------------------------------------------------
-// REGISTRAR RUTAS DE LA API
+// RUTAS
 // ------------------------------------------------------------
-// Rutas de autenticación
-app.use('/api/auth', authRoutes); // Prefijo: /api/auth
+app.use('/api/auth', authRoutes);
+app.use('/api/productos', productRoutes);
 
-// Rutas de productos (sin protección, por ahora solo GET)
-app.use('/api/productos', productRoutes); // Prefijo: /api/productos
-
-// Ruta de prueba
-app.get('/', (req, res) => {
-    res.send('API de Inventario E-commerce PE está corriendo.');
+// RUTA DE HEALTH CHECK
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'OK',
+        message: '✅ Servidor funcionando correctamente',
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development'
+    });
 });
 
+// Ruta raíz
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'API de Inventario E-commerce PE está corriendo.',
+        endpoints: {
+            health: '/health',
+            productos: '/api/productos',
+            auth: '/api/auth'
+        }
+    });
+});
+
+// CORRECCIÓN: Manejo de rutas no encontradas - SIN EL *
+app.use((req, res) => {
+    res.status(404).json({ 
+        error: 'Ruta no encontrada',
+        path: req.originalUrl,
+        method: req.method,
+        availableEndpoints: ['/', '/health', '/api/productos', '/api/auth']
+    });
+});
 
 // Iniciar el servidor
-app.listen(PORT, () => {
-  console.log(`Servidor de la API corriendo en http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`=================================`);
+  console.log(`🚀 Servidor de la API corriendo`);
+  console.log(`📍 Local: http://localhost:${PORT}`);
+  console.log(`📍 Red:   http://192.168.1.35:${PORT}`);
+  console.log(`📍 Health: http://192.168.1.35:${PORT}/health`);
+  console.log(`=================================`);
 });

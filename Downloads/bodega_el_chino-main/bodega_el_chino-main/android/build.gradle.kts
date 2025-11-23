@@ -20,18 +20,17 @@ subprojects {
 }
 
 buildscript {
-    ext.kotlin_version = '1.9.22' // Verifica tu versión de Kotlin
+    val kotlin_version by extra("1.9.22")
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        // Necesitas el plugin de Gradle para Android
-        classpath 'com.android.tools.build:gradle:8.1.4' // Asegúrate de tener la versión correcta
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-        // 🔑 AGREGAR ESTA LÍNEA (Google Services Plugin)
-        classpath 'com.google.gms:google-services:4.4.1' // Usar la última versión estable
+        classpath("com.android.tools.build:gradle:8.1.4")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version")
+        // ... (other lines)
+        classpath("com.google.gms:google-services:4.4.1")
     }
 }
 

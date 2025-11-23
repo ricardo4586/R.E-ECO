@@ -5,91 +5,21 @@ import 'dart:convert';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 
+// Importar nuestros servicios y modelos
+import 'services/api_service.dart';
+import 'models/product_model.dart';
+
 // Definición de Roles
 enum UserRole { admin, user, none }
 
 // -----------------------------------------------------------------------------
-// 1. MODELO DE DATOS
-// -----------------------------------------------------------------------------
-
-/// Modelo para un producto escaneado o registrado.
-class Product {
-  final String barcode;
-  final String name;
-  final String brand;
-  final double price; // Precio simulado para el totalizador
-
-  Product({
-    required this.barcode,
-    required this.name,
-    required this.brand,
-    required this.price,
-  });
-
-  factory Product.fromJson(Map<String, dynamic> json) {
-    // Extracción de datos de Open Food Facts
-    final product = json['product'] ?? {};
-    
-    // Generar un precio simulado basado en el código de barras para el totalizador.
-    // Esto es solo para fines de demostración.
-    final simulatedPrice = (json['code']?.hashCode ?? 1) % 20 + 5.0; // Precio entre 5 y 24
-    
-    return Product(
-      barcode: json['code'] ?? 'N/A',
-      name: product['product_name'] ?? 'Producto Desconocido',
-      brand: product['brands'] ?? 'Marca Desconocida',
-      price: simulatedPrice.toDouble(),
-    );
-  }
-
-  // Constructor para productos registrados manualmente por el Admin
-  Product.manual({
-    required this.barcode,
-    required this.name,
-    required this.brand,
-    required this.price,
-  });
-}
-
-// -----------------------------------------------------------------------------
-// 2. SERVICIO DE API (Simulación Tottus / Uso de Open Food Facts)
-// -----------------------------------------------------------------------------
-
-class ProductApiService {
-  static const String _baseUrl = 'https://world.openfoodfacts.org/api/v0/product/';
-
-  /// Busca un producto por su código de barras usando Open Food Facts.
-  Future<Product?> fetchProduct(String barcode) async {
-    final uri = Uri.parse('$_baseUrl$barcode.json');
-    try {
-      final response = await http.get(uri);
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 1) { // 1 means product found
-          return Product.fromJson(data);
-        } else {
-          // Producto no encontrado en la API externa
-          return null;
-        }
-      }
-    } catch (e) {
-      // Manejo de errores de red o parsing
-      print('Error al buscar producto: $e');
-    }
-    return null;
-  }
-}
-
-// -----------------------------------------------------------------------------
-// 3. GESTIÓN DE ESTADO (Provider)
+// 1. GESTIÓN DE ESTADO (Provider) - ACTUALIZADO
 // -----------------------------------------------------------------------------
 
 class AppState extends ChangeNotifier {
   UserRole _currentRole = UserRole.none;
-  final ProductApiService _apiService = ProductApiService();
   
-  // Base de datos simulada para productos registrados por el Admin
+  // Base de datos simulada para productos registrados por el Admin (como respaldo)
   final Map<String, Product> _storedProducts = {};
   
   // Carrito para la funcionalidad de escaneo por lotes
@@ -112,29 +42,55 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Busca un producto, primero en la BD simulada, luego en la API externa.
+  /// Busca un producto, primero en TU BACKEND, luego en la BD simulada como respaldo.
   Future<Product?> searchProduct(String barcode) async {
-    // 1. Buscar en la base de datos simulada
+    // 1. Buscar en TU BACKEND
+    final result = await ApiService.searchProduct(barcode);
+    
+    if (result['success'] == true && result['data'] != null) {
+      // Producto encontrado en tu base de datos
+      final product = Product.fromJson(result['data']['product']);
+      // Guardar en almacenamiento local como caché
+      _storedProducts[barcode] = product;
+      return product;
+    }
+
+    // 2. Si no existe en el backend, guardar el código escaneado (solo admin)
+    if (_currentRole == UserRole.admin) {
+      final scanResult = await ApiService.sendBarcodeScan(barcode);
+      if (scanResult['success'] == true) {
+        print('✅ Código $barcode guardado en base de datos como pendiente');
+      }
+    }
+
+    // 3. Buscar en la base de datos simulada como respaldo
     if (_storedProducts.containsKey(barcode)) {
       return _storedProducts[barcode];
     }
 
-    // 2. Buscar en la API externa
-    final product = await _apiService.fetchProduct(barcode);
-    
-    // Si se encuentra en la API, lo guardamos temporalmente en la BD simulada
-    // para acelerar futuras búsquedas.
-    if (product != null) {
-      _storedProducts[barcode] = product;
-    }
-
-    return product;
+    return null;
   }
   
   /// Permite al Admin registrar un producto no encontrado.
   void registerProduct(Product product) {
     _storedProducts[product.barcode] = product;
+    
+    // Opcional: Enviar al backend también
+    if (_currentRole == UserRole.admin) {
+      _sendProductToBackend(product);
+    }
+    
     notifyListeners();
+  }
+
+  /// Enviar producto completo al backend
+  Future<void> _sendProductToBackend(Product product) async {
+    final result = await ApiService.saveProduct(product.toJson());
+    if (result['success'] == true) {
+      print('✅ Producto guardado en backend: ${product.name}');
+    } else {
+      print('❌ Error al guardar en backend: ${result['message']}');
+    }
   }
 
   /// Añade un producto al carrito (usado en BatchScanScreen).
@@ -154,7 +110,7 @@ class AppState extends ChangeNotifier {
 }
 
 // -----------------------------------------------------------------------------
-// 4. ESTRUCTURA PRINCIPAL DE LA APLICACIÓN
+// 2. ESTRUCTURA PRINCIPAL DE LA APLICACIÓN
 // -----------------------------------------------------------------------------
 
 void main() {
@@ -205,7 +161,7 @@ class AuthWrapper extends StatelessWidget {
 }
 
 // -----------------------------------------------------------------------------
-// 5. PANTALLA DE INICIO DE SESIÓN
+// 3. PANTALLA DE INICIO DE SESIÓN
 // -----------------------------------------------------------------------------
 
 class LoginScreen extends StatelessWidget {
@@ -254,10 +210,35 @@ class LoginScreen extends StatelessWidget {
               ),
               const SizedBox(height: 40),
               Text(
-                'Simulación de Roles: No requiere credenciales reales.',
+                'Conectado a Base de Datos Local',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey.shade600),
-              )
+                style: TextStyle(color: Colors.green.shade700, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 10),
+              FutureBuilder<bool>(
+                future: ApiService.checkConnection(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Text(
+                      'Verificando conexión con el servidor...',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.orange),
+                    );
+                  }
+                  
+                  final isConnected = snapshot.data ?? false;
+                  return Text(
+                    isConnected 
+                      ? '✅ Servidor conectado correctamente'
+                      : '❌ No se puede conectar al servidor',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: isConnected ? Colors.green : Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  );
+                },
+              ),
             ],
           ),
         ),
@@ -267,7 +248,7 @@ class LoginScreen extends StatelessWidget {
 }
 
 // -----------------------------------------------------------------------------
-// 6. PANTALLAS DE USUARIO
+// 4. PANTALLAS DE USUARIO
 // -----------------------------------------------------------------------------
 
 /// Pantalla principal para el rol USUARIO. Solo permite escanear para ver info.
@@ -296,15 +277,14 @@ class UserScannerScreen extends StatelessWidget {
           _showInfoDialog(
             context,
             'Producto no encontrado',
-            'El código $barcode no se encontró en la base de datos.',
+            'El código $barcode no se encontró en la base de datos.\n\nEl administrador ha sido notificado para registrar este producto.',
           );
         },
         onRegistrationNeeded: (barcode) {
-          // El usuario no puede registrar, solo se informa
           _showInfoDialog(
             context,
             'No Autorizado',
-            'Como Usuario, no puedes registrar nuevos productos. Código: $barcode',
+            'Como Usuario, no puedes registrar nuevos productos.\n\nCódigo: $barcode\n\nNotifica al administrador.',
           );
         },
       ),
@@ -313,10 +293,10 @@ class UserScannerScreen extends StatelessWidget {
 }
 
 // -----------------------------------------------------------------------------
-// 7. PANTALLAS DE ADMINISTRADOR
+// 5. PANTALLAS DE ADMINISTRADOR - CORREGIDAS
 // -----------------------------------------------------------------------------
 
-/// Pantalla de navegación principal para el rol ADMINISTRADOR.
+/// Pantalla de navegación principal para el rol ADMINISTRADOR - CORREGIDA
 class AdminHomeScreen extends StatelessWidget {
   const AdminHomeScreen({super.key});
 
@@ -341,15 +321,22 @@ class AdminHomeScreen extends StatelessWidget {
               context,
               icon: Icons.qr_code_scanner,
               title: 'Escaneo y Registro de Productos',
-              subtitle: 'Consulta información o registra productos nuevos.',
-              targetScreen: AdminScannerScreen(),
+              subtitle: 'Consulta información o registra productos nuevos en la base de datos.',
+              targetScreen: AdminScannerScreen(), // ✅ CORREGIDO
             ),
             _buildAdminActionCard(
               context,
-              icon: Icons.point_of_sale,
+              icon: Icons.shopping_cart,
               title: 'Punto de Venta (Totalizador)',
               subtitle: 'Escanea varios productos y suma el total.',
-              targetScreen: const BatchScanScreen(),
+              targetScreen: const BatchScanScreen(), // ✅ CORREGIDO
+            ),
+            _buildAdminActionCard(
+              context,
+              icon: Icons.storage,
+              title: 'Ver Base de Datos',
+              subtitle: 'Explora todos los productos registrados en el sistema.',
+              targetScreen: const DatabaseViewScreen(), // ✅ CORREGIDO
             ),
           ],
         ),
@@ -406,8 +393,216 @@ class AdminScannerScreen extends StatelessWidget {
   }
 }
 
+/// Pantalla para ver la base de datos completa - VERSIÓN MEJORADA CON DEBUG
+class DatabaseViewScreen extends StatefulWidget {
+  const DatabaseViewScreen({super.key});
+
+  @override
+  State<DatabaseViewScreen> createState() => _DatabaseViewScreenState();
+}
+
+class _DatabaseViewScreenState extends State<DatabaseViewScreen> {
+  List<dynamic> _products = [];
+  bool _isLoading = true;
+  String _errorMessage = '';
+  String _debugInfo = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
+  }
+
+  Future<void> _loadProducts() async {
+    print('🔄 Iniciando carga de productos...');
+    
+    try {
+      print('📦 Llamando a ApiService.getCatalog()...');
+      final result = await ApiService.getCatalog();
+      print('📦 Resultado CRUDO de getCatalog(): $result');
+      
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _debugInfo = 'Status: ${result['success'] ? 'ÉXITO' : 'FALLÓ'}\n'
+                      'Mensaje: ${result['message']}\n'
+                      'Error: ${result['error']}\n'
+                      'Datos recibidos: ${result['data']?.length ?? 0} productos';
+          
+          if (result['success'] == true) {
+            _products = result['data'] ?? [];
+            if (_products.isEmpty) {
+              _errorMessage = 'No hay productos en la base de datos';
+            } else {
+              _errorMessage = '';
+              print('✅ Productos cargados: ${_products.length}');
+              // Mostrar primeros 2 productos para debug
+              for (int i = 0; i < (_products.length < 2 ? _products.length : 2); i++) {
+                print('   Producto $i: ${_products[i]}');
+              }
+            }
+          } else {
+            _errorMessage = result['message'] ?? 'Error desconocido al cargar productos';
+            _products = [];
+          }
+        });
+      }
+    } catch (e) {
+      print('❌ Error en _loadProducts(): $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Error de conexión: $e';
+          _debugInfo = 'Excepción: $e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Base de Datos de Productos'),
+        backgroundColor: Colors.blue.shade700,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadProducts,
+          ),
+          IconButton(
+            icon: const Icon(Icons.bug_report),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Información de Debug'),
+                  content: SingleChildScrollView(
+                    child: Text(_debugInfo),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cerrar'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Cargando productos...'),
+                ],
+              ),
+            )
+          : _products.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.inventory_2, size: 64, color: Colors.grey),
+                      const SizedBox(height: 16),
+                      Text(
+                        _errorMessage.isEmpty ? 'No hay productos' : _errorMessage,
+                        style: const TextStyle(fontSize: 18, color: Colors.grey),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: _loadProducts,
+                        child: const Text('Reintentar'),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Debug Info'),
+                              content: Text(_debugInfo),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Cerrar'),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        child: const Text('Ver información técnica'),
+                      ),
+                    ],
+                  ),
+                )
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Text(
+                        'Total: ${_products.length} productos',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _products.length,
+                        itemBuilder: (context, index) {
+                          final product = _products[index];
+                          return Card(
+                            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                            child: ListTile(
+                              leading: const Icon(Icons.inventory_2, size: 40, color: Colors.blue),
+                              title: Text(
+                                product['nombre']?.toString() ?? 'Sin nombre',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Código: ${product['codigo_barras']?.toString() ?? 'N/A'}'),
+                                  Text('Precio: S/. ${product['precio_unidad']?.toString() ?? '0.00'}'),
+                                  Text('Stock: ${product['stock_actual']?.toString() ?? '0'}'),
+                                  Text('Estado: ${product['estado']?.toString() ?? 'activo'}'),
+                                ],
+                              ),
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'S/. ${product['precio_unidad']?.toString() ?? '0.00'}',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                  ),
+                                  Text(
+                                    'Stock: ${product['stock_actual']?.toString() ?? '0'}',
+                                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+    );
+  }
+}
+
 // -----------------------------------------------------------------------------
-// 8. PANTALLA DE REGISTRO MANUAL (ADMIN)
+// 6. PANTALLA DE REGISTRO MANUAL (ADMIN)
 // -----------------------------------------------------------------------------
 
 /// Muestra un diálogo para que el Admin registre un producto nuevo.
@@ -432,21 +627,35 @@ class _ProductRegistrationScreenState extends State<ProductRegistrationScreen> {
   String _name = '';
   String _brand = '';
   double? _price;
+  int? _stock;
+  String _unit = 'unidad';
+  String _description = '';
 
   void _submitRegistration() {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
-      final newProduct = Product.manual(
+      
+      final newProduct = Product(
         barcode: widget.barcode,
         name: _name,
         brand: _brand,
         price: _price!,
+        stock: _stock ?? 0,
+        unit: _unit,
+        description: _description.isEmpty ? null : _description,
+        status: 'activo', // ← CORREGIDO: AGREGADO STATUS
       );
       
+      // Guardar en el estado local y enviar al backend
       Provider.of<AppState>(context, listen: false).registerProduct(newProduct);
       
-      _showInfoDialog(context, '¡Registro Exitoso!', 'El producto "${newProduct.name}" ha sido guardado localmente.');
-      Navigator.of(context).pop();
+      _showInfoDialog(
+        context, 
+        '¡Registro Exitoso!', 
+        'El producto "${newProduct.name}" ha sido guardado en la base de datos.'
+      ).then((_) {
+        Navigator.of(context).pop();
+      });
     }
   }
 
@@ -470,31 +679,62 @@ class _ProductRegistrationScreenState extends State<ProductRegistrationScreen> {
               ),
               const SizedBox(height: 20),
               _buildTextFormField(
-                label: 'Nombre del Producto',
+                label: 'Nombre del Producto *',
                 validator: (value) => value!.isEmpty ? 'El nombre es obligatorio' : null,
                 onSaved: (value) => _name = value!,
               ),
               const SizedBox(height: 15),
               _buildTextFormField(
-                label: 'Marca',
+                label: 'Marca *',
                 validator: (value) => value!.isEmpty ? 'La marca es obligatoria' : null,
                 onSaved: (value) => _brand = value!,
               ),
               const SizedBox(height: 15),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextFormField(
+                      label: 'Precio (S/.) *',
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      validator: (value) {
+                        if (value!.isEmpty) return 'El precio es obligatorio';
+                        if (double.tryParse(value) == null) return 'Ingresa un número válido';
+                        return null;
+                      },
+                      onSaved: (value) => _price = double.tryParse(value!),
+                    ),
+                  ),
+                  const SizedBox(width: 15),
+                  Expanded(
+                    child: _buildTextFormField(
+                      label: 'Stock *',
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        if (value!.isEmpty) return 'El stock es obligatorio';
+                        if (int.tryParse(value) == null) return 'Ingresa un número válido';
+                        return null;
+                      },
+                      onSaved: (value) => _stock = int.tryParse(value!),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 15),
               _buildTextFormField(
-                label: 'Precio (Soles)',
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                validator: (value) {
-                  if (value!.isEmpty) return 'El precio es obligatorio';
-                  if (double.tryParse(value) == null) return 'Ingresa un número válido';
-                  return null;
-                },
-                onSaved: (value) => _price = double.tryParse(value!),
+                label: 'Unidad de Medida',
+                initialValue: 'unidad',
+                onSaved: (value) => _unit = value ?? 'unidad',
+              ),
+              const SizedBox(height: 15),
+              _buildTextFormField(
+                label: 'Descripción (opcional)',
+                maxLines: 3,
+                onSaved: (value) => _description = value ?? '',
               ),
               const SizedBox(height: 30),
               ElevatedButton.icon(
                 icon: const Icon(Icons.save),
-                label: const Text('Guardar Producto'),
+                label: const Text('Guardar en Base de Datos'),
                 onPressed: _submitRegistration,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.orange.shade700,
@@ -512,9 +752,11 @@ class _ProductRegistrationScreenState extends State<ProductRegistrationScreen> {
   
   Widget _buildTextFormField({
     required String label,
-    required FormFieldValidator<String> validator,
     required FormFieldSetter<String> onSaved,
+    FormFieldValidator<String>? validator,
     TextInputType keyboardType = TextInputType.text,
+    int maxLines = 1,
+    String? initialValue,
   }) {
     return TextFormField(
       decoration: InputDecoration(
@@ -523,14 +765,16 @@ class _ProductRegistrationScreenState extends State<ProductRegistrationScreen> {
         contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
       ),
       keyboardType: keyboardType,
+      maxLines: maxLines,
       validator: validator,
       onSaved: onSaved,
+      initialValue: initialValue,
     );
   }
 }
 
 // -----------------------------------------------------------------------------
-// 9. PANTALLA DE ESCANEO POR LOTES / TOTALIZADOR
+// 7. PANTALLA DE ESCANEO POR LOTES / TOTALIZADOR
 // -----------------------------------------------------------------------------
 
 class BatchScanScreen extends StatelessWidget {
@@ -553,6 +797,11 @@ class BatchScanScreen extends StatelessWidget {
                   isAdmin: true, // El Batch Scan necesita acceso a la BD Admin
                   onProductFound: (product) {
                     appState.addToCart(product);
+                    _showInfoDialog(
+                      context,
+                      'Producto Agregado',
+                      '${product.name} - S/. ${product.price.toStringAsFixed(2)}\n\nTotal: S/. ${appState.cartTotal.toStringAsFixed(2)}',
+                    );
                   },
                   onProductNotFound: (barcode) {
                     _showInfoDialog(
@@ -594,24 +843,32 @@ class CartSummary extends StatelessWidget {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: appState.cart.length,
-              itemBuilder: (context, index) {
-                final item = appState.cart[index];
-                return ListTile(
-                  title: Text(item.name),
-                  subtitle: Text(item.brand),
-                  trailing: Text('S/. ${item.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                );
-              },
-            ),
+            child: appState.cart.isEmpty
+                ? const Center(child: Text('No hay productos en el carrito'))
+                : ListView.builder(
+                    itemCount: appState.cart.length,
+                    itemBuilder: (context, index) {
+                      final item = appState.cart[index];
+                      return Card(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        child: ListTile(
+                          title: Text(item.name),
+                          subtitle: Text('${item.brand} - ${item.unit}'),
+                          trailing: Text('S/. ${item.price.toStringAsFixed(2)}', 
+                              style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      );
+                    },
+                  ),
           ),
           const Divider(),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('TOTAL A PAGAR:', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blue)),
-              Text('S/. ${appState.cartTotal.toStringAsFixed(2)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blue)),
+              const Text('TOTAL A PAGAR:', 
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blue)),
+              Text('S/. ${appState.cartTotal.toStringAsFixed(2)}', 
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blue)),
             ],
           ),
           const SizedBox(height: 10),
@@ -619,8 +876,10 @@ class CartSummary extends StatelessWidget {
             icon: const Icon(Icons.check_circle_outline),
             label: const Text('Finalizar Venta / Limpiar Carrito', style: TextStyle(fontSize: 18)),
             onPressed: () {
+              final total = appState.cartTotal;
               appState.clearCart();
-              _showInfoDialog(context, 'Venta Finalizada', 'El carrito ha sido limpiado. Total: S/. ${appState.cartTotal.toStringAsFixed(2)}');
+              _showInfoDialog(context, 'Venta Finalizada', 
+                  'El carrito ha sido limpiado.\n\nTotal de la venta: S/. ${total.toStringAsFixed(2)}');
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
@@ -636,7 +895,7 @@ class CartSummary extends StatelessWidget {
 }
 
 // -----------------------------------------------------------------------------
-// 10. WIDGET DE ESCÁNER REUTILIZABLE
+// 8. WIDGET DE ESCÁNER REUTILIZABLE
 // -----------------------------------------------------------------------------
 
 class ProductScanner extends StatefulWidget {
@@ -660,11 +919,12 @@ class ProductScanner extends StatefulWidget {
 class _ProductScannerState extends State<ProductScanner> {
   bool _isScanning = true;
   String _scanResult = 'Esperando código...';
+  String? _lastScannedBarcode; // ← NUEVO: Guardar último código escaneado
+  DateTime? _lastScanTime; // ← NUEVO: Controlar tiempo entre escaneos
   
   @override
   void initState() {
     super.initState();
-    // Iniciar el escaneo al cargar la pantalla
     setState(() => _isScanning = true);
   }
 
@@ -674,32 +934,82 @@ class _ProductScannerState extends State<ProductScanner> {
     final barcode = capture.barcodes.first.rawValue;
     if (barcode == null) return;
 
+    // ← NUEVO: Prevenir escaneos múltiples del mismo código
+    final now = DateTime.now();
+    if (_lastScannedBarcode == barcode && 
+        _lastScanTime != null && 
+        now.difference(_lastScanTime!) < Duration(seconds: 3)) {
+      print('⏭️  Ignorando escaneo duplicado: $barcode');
+      return;
+    }
+
+    print('🔍 Código escaneado: $barcode');
+    
     setState(() {
-      _isScanning = false; // Detiene el escaneo temporalmente
-      _scanResult = 'Escaneado: $barcode. Buscando...';
+      _isScanning = false;
+      _scanResult = 'Escaneado: $barcode\nBuscando en base de datos...';
+      _lastScannedBarcode = barcode; // ← GUARDAR CÓDIGO
+      _lastScanTime = now; // ← GUARDAR TIEMPO
     });
 
-    final product = await appState.searchProduct(barcode);
+    try {
+      final product = await appState.searchProduct(barcode);
+      print('🔍 Resultado búsqueda: $product');
 
-    if (mounted) {
-      if (product != null) {
-        widget.onProductFound(product);
-      } else {
-        if (widget.isAdmin) {
-          widget.onProductNotFound(barcode); // Llama a la lógica de registro o aviso del Admin
-        } else {
-          widget.onRegistrationNeeded(barcode); // Llama al aviso del Usuario
-        }
-      }
-
-      // Vuelve a habilitar el escaneo después de un pequeño retraso
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) {
+      if (mounted) {
+        if (product != null) {
+          widget.onProductFound(product);
           setState(() {
-            _isScanning = true;
-            _scanResult = 'Listo para escanear el siguiente...';
+            _scanResult = '✅ ${product.name}\nS/. ${product.price.toStringAsFixed(2)}';
           });
+        } else {
+          print('❌ Producto no encontrado: $barcode');
+          if (widget.isAdmin) {
+            setState(() {
+              _scanResult = '📝 Nuevo producto\nCompleta los datos';
+            });
+            
+            // ← NUEVO: Pequeño delay antes de abrir el registro
+            await Future.delayed(Duration(milliseconds: 500));
+            
+            widget.onProductNotFound(barcode);
+          } else {
+            setState(() {
+              _scanResult = '❌ No encontrado\nContacta al administrador';
+            });
+            widget.onRegistrationNeeded(barcode);
+          }
         }
+
+        // ← MEJORADO: Reactivar después de 3 segundos (más tiempo)
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) {
+            setState(() {
+              _isScanning = true;
+              _scanResult = 'Listo para escanear...';
+            });
+          }
+        });
+      }
+    } catch (e) {
+      print('❌ Error en escaneo: $e');
+      if (mounted) {
+        setState(() {
+          _scanResult = '❌ Error: $e';
+          _isScanning = true;
+        });
+      }
+    }
+  }
+
+  // ← NUEVO: Método para reiniciar manualmente el escáner
+  void _resetScanner() {
+    if (mounted) {
+      setState(() {
+        _isScanning = true;
+        _scanResult = 'Escáner reiniciado\nListo para escanear...';
+        _lastScannedBarcode = null;
+        _lastScanTime = null;
       });
     }
   }
@@ -711,37 +1021,83 @@ class _ProductScannerState extends State<ProductScanner> {
     return Column(
       children: <Widget>[
         Expanded(
-          child: MobileScanner(
-            key: ValueKey(_isScanning), // Key para forzar la reconstrucción si es necesario
-            onDetect: (capture) => _onBarcodeDetected(capture, appState),
-            controller: MobileScannerController(
-              detectionSpeed: DetectionSpeed.normal,
-              autoStart: true,
-              torchEnabled: false,
-            ),
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, child) {
-              return Center(child: Text('Error de cámara: $error'));
-            },
+          child: Stack(
+            children: [
+              MobileScanner(
+                key: ValueKey(_isScanning),
+                onDetect: (capture) => _onBarcodeDetected(capture, appState),
+                controller: MobileScannerController(
+                  detectionSpeed: DetectionSpeed.normal,
+                  autoStart: true,
+                  torchEnabled: false,
+                ),
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, child) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.camera_alt, size: 64, color: Colors.grey),
+                        const SizedBox(height: 16),
+                        Text('Error de cámara: $error', textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: () => setState(() {}),
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              // ← NUEVO: Botón para reiniciar manualmente
+              if (!_isScanning)
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: FloatingActionButton.small(
+                    onPressed: _resetScanner,
+                    child: Icon(Icons.refresh),
+                    backgroundColor: Colors.blue,
+                  ),
+                ),
+            ],
           ),
         ),
         Container(
           padding: const EdgeInsets.all(16.0),
           width: double.infinity,
           color: Colors.black87,
-          child: Text(
-            _isScanning ? 'Punto de mira: Escaneando...' : _scanResult,
-            style: const TextStyle(color: Colors.white, fontSize: 16),
-            textAlign: TextAlign.center,
+          child: Column(
+            children: [
+              Text(
+                _scanResult,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                textAlign: TextAlign.center,
+              ),
+              // ← NUEVO: Botón para reiniciar en la parte inferior también
+              if (!_isScanning) ...[
+                SizedBox(height: 8),
+                ElevatedButton.icon(
+                  icon: Icon(Icons.refresh, size: 16),
+                  label: Text('Reiniciar Escáner'),
+                  onPressed: _resetScanner,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ],
     );
   }
 }
-
 // -----------------------------------------------------------------------------
-// 11. UTILIDADES (Diálogos)
+// 9. UTILIDADES (Diálogos)
 // -----------------------------------------------------------------------------
 
 /// Muestra un diálogo con los detalles del producto.
@@ -756,26 +1112,29 @@ void _showProductDetails(BuildContext context, Product product) {
           children: <Widget>[
             Text('Marca: ${product.brand}'),
             const Divider(),
-            Text('Código de Barras: ${product.barcode}'),
-            Text('Precio Sugerido: S/. ${product.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Código: ${product.barcode}'),
+            Text('Precio: S/. ${product.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Stock: ${product.stock} ${product.unit}'),
+            if (product.description != null) ...[
+              const Divider(),
+              Text('Descripción: ${product.description}'),
+            ],
           ],
         ),
       ),
       actions: <Widget>[
         TextButton(
           child: const Text('Cerrar', style: TextStyle(color: Colors.green)),
-          onPressed: () {
-            Navigator.of(context).pop();
-          },
+          onPressed: () => Navigator.of(context).pop(),
         ),
       ],
     ),
   );
 }
 
-/// Muestra un diálogo de información general (sustituto de alert()).
-void _showInfoDialog(BuildContext context, String title, String content) {
-  showDialog(
+/// Muestra un diálogo de información general.
+Future<void> _showInfoDialog(BuildContext context, String title, String content) {
+  return showDialog(
     context: context,
     builder: (context) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
